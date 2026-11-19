@@ -357,7 +357,7 @@ function ActiveTokensView({ tokens, notify, reliability }: { tokens: Token[]; no
 
 function MerchantApp({ view, setView, shops, tokens, notify, email, products, offers, userId, loadCatalog, demoSession, onSwitchDemo, onSignOut }: { view: View; setView: (view: View) => void; shops: Shop[]; tokens: Token[]; notify: (message: string, tone?: Toast['tone']) => void; email: string; products: Product[]; offers: Offer[]; userId: string; loadCatalog: () => Promise<void>; demoSession: boolean; onSwitchDemo: (role: Role) => void; onSignOut: () => void }) {
   const shop = shops[0];
-  if (view === 'scan') return <ScanView tokens={tokens} notify={notify} />;
+  if (view === 'scan') return <ScanView shop={shop} notify={notify} />;
   if (view === 'wallet') return <WalletView shop={shop} notify={notify} />;
   if (view === 'radar') return <RadarView />;
   if (view === 'inventory') return <InventoryView shop={shop} products={products} offers={offers} notify={notify} onChanged={loadCatalog} />;
@@ -371,7 +371,47 @@ function MerchantApp({ view, setView, shops, tokens, notify, email, products, of
   return <MerchantRequests shop={shop} setView={setView} notify={notify} products={products} />;
 }
 function MerchantRequests({ shop, setView, notify, products }: { shop: Shop; setView: (view: View) => void; notify: (message: string, tone?: Toast['tone']) => void; products: Product[] }) { const [approved, setApproved] = useState(false); return <div className="page merchant-page"><div className="merchant-banner"><div className="merchant-avatar"><Store size={24} /></div><div><span className="eyebrow">Good morning</span><h1>{shop.name}</h1><p><span className="live-dot" /> Accepting requests · 0.8 km</p></div><Menu size={20} /></div><div className="merchant-stats"><div><b>₹500</b><span>Wallet balance</span></div><div><b>8</b><span>Tokens this week</span></div><div><b>4.9</b><span>Shop rating</span></div></div><div className="section-heading"><div><span className="eyebrow">Live inbox</span><h2>Requests <span className="count-badge">2</span></h2></div><button className="refresh"><RefreshCw size={16} /></button></div><article className="request-card"><div className="request-meta"><span className="chip orange-chip">New request</span><span>Just now</span></div><div className="request-customer"><div className="customer-avatar">AS</div><div><b>Aarohi Sharma</b><p>Wants to reserve for inspection</p></div><strong>₹449</strong></div><div className="request-item"><ImageThumb slug="cotton-blue-kurti" small /><div><b>Cotton Blue Kurti</b><p>Size S · 1 item</p></div><span className="in-stock"><Check size={13} /> In stock</span></div><div className="request-actions">{approved ? <button className="approved-button"><Check size={17} /> Held for Aarohi</button> : <><button className="primary-button" onClick={() => { setApproved(true); notify('Stock held for 30 minutes'); }}>Hold stock</button><button className="ghost-button" onClick={() => notify('Marked out of stock')}>Out of stock</button><button className="ghost-button" onClick={async () => { const product = products.find((p) => p.slug === 'cotton-blue-kurti'); if (!product) { notify('Could not find the product.', 'error'); return; } const result = await supabase.rpc('notify_waitlist_for_offer', { p_product: product.id, p_shop: shop.id }); if (result.error) { notify('No waitlist to notify, or not authorized.', 'error'); return; } notify('Waitlisted customers notified'); }}>Mark in stock</button></>}</div></article><article className="bulk-card"><div className="bulk-icon"><Crown size={19} /></div><div><span className="chip navy-chip">Festival kit auto-approved</span><h3>Kanya Pujan Kit Pro</h3><p>7 units available · Auto-approved orders do not need review.</p></div><ChevronRight size={18} /></article><button className="scan-launch" onClick={() => setView('scan')}><div><span>Ready at the counter?</span><b>Scan a token</b></div><div className="scan-circle"><Camera size={22} /></div></button></div>; }
-function ScanView({ tokens, notify }: { tokens: Token[]; notify: (message: string, tone?: Toast['tone']) => void }) { const [otp, setOtp] = useState(''); const token = tokens.find((item) => item.otp === otp); return <div className="page"><div className="page-heading"><div><span className="eyebrow">Counter tools</span><h1>Scan token</h1></div><Camera size={23} /></div><div className="camera-placeholder"><Camera size={35} /><b>Camera preview</b><span>Point at the customer QR</span></div><div className="or-divider"><span>or enter 6-digit OTP</span></div><div className="otp-input"><Ticket size={18} /><input value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000" inputMode="numeric" /></div>{otp.length === 6 && !token && <div className="invalid-card"><X size={20} /><div><b>Invalid token</b><p>This token may be used, cancelled or expired.</p></div></div>}{token && <div className="verified-card"><div className="verified-head"><ShieldCheck size={23} /><div><span>Verified token</span><h3>{token.shop.name}</h3></div></div>{token.items.map((item) => <div className="verified-item" key={item.offer.id}><span>{item.product.name} · {item.size ?? 'Standard'}</span><b>{item.quantity}</b></div>)}<div className="total-line"><span>Total (app price)</span><b>{money(token.total)}</b></div><button className="primary-button full" onClick={async () => { const result = await supabase.rpc('complete_token_pickup', { p_token: token.id }); if (result.error) { notify('Could not complete the pickup. Try again.', 'error'); return; } notify('Bill generated and token marked used'); }}>Generate bill <CreditCard size={16} /></button></div>}</div>; }
+function ScanView({ shop, notify }: { shop: Shop; notify: (message: string, tone?: Toast['tone']) => void }) {
+  type ScanToken = { id: string; total: number; items: CartItem[] };
+  const [otp, setOtp] = useState('');
+  const [token, setToken] = useState<ScanToken | null>(null);
+  const [problem, setProblem] = useState<'invalid' | 'expired' | 'error' | null>(null);
+  const [checking, setChecking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [billed, setBilled] = useState<{ total: number } | null>(null);
+  useEffect(() => {
+    setToken(null); setProblem(null);
+    if (otp.length !== 6) { setChecking(false); return; }
+    let active = true; setChecking(true);
+    supabase.from('tokens').select('*').eq('otp', otp).eq('shop', shop.id).eq('status', 'active').order('created_at', { ascending: false }).limit(1).maybeSingle().then(({ data, error }) => {
+      if (!active) return; setChecking(false);
+      if (error) { setProblem('error'); return; }
+      if (!data) { setProblem('invalid'); return; }
+      if (new Date(data.expires_at).getTime() < Date.now()) { setProblem('expired'); return; }
+      setToken({ id: data.id, total: Number(data.total), items: (data.items ?? []) as CartItem[] });
+    });
+    return () => { active = false; };
+  }, [otp, shop.id]);
+  async function generateBill() {
+    if (!token || busy) return;
+    setBusy(true);
+    const result = await supabase.rpc('complete_token_pickup', { p_token: token.id });
+    setBusy(false);
+    if (result.error) { notify(`Could not generate the bill: ${result.error.message}`, 'error'); return; }
+    setBilled({ total: token.total }); setToken(null); setOtp('');
+    notify('Bill generated and token marked used');
+  }
+  return <div className="page"><div className="page-heading"><div><span className="eyebrow">Counter tools</span><h1>Scan token</h1></div><Camera size={23} /></div>
+    {billed ? <div className="verified-card"><div className="verified-head"><ShieldCheck size={23} /><div><span>Bill generated</span><h3>{money(billed.total)}</h3></div></div><p className="hint">Token marked used. The token fee was deducted from your wallet.</p><button className="primary-button full" onClick={() => setBilled(null)}>Scan another token</button></div> : <>
+      <div className="camera-placeholder"><Camera size={35} /><b>Camera preview</b><span>Point at the customer QR</span></div>
+      <div className="or-divider"><span>or enter 6-digit OTP</span></div>
+      <div className="otp-input"><Ticket size={18} /><input value={otp} onChange={(event) => setOtp(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="000000" inputMode="numeric" /></div>
+      {checking && <p className="hint" style={{ marginTop: 12 }}>Checking token...</p>}
+      {problem && <div className="invalid-card"><X size={20} /><div><b>{problem === 'expired' ? 'Token expired' : problem === 'error' ? 'Could not check this token' : 'Invalid token'}</b><p>{problem === 'expired' ? 'This token passed its expiry time. Ask the customer to reserve again.' : problem === 'error' ? 'Check your connection and try again.' : `No active token with this code for ${shop.name}. It may be used, cancelled, expired, or belong to another shop.`}</p></div></div>}
+      {token && <div className="verified-card"><div className="verified-head"><ShieldCheck size={23} /><div><span>Verified token</span><h3>{shop.name}</h3></div></div>{token.items.map((item, index) => <div className="verified-item" key={item.offer?.id ?? index}><span>{item.product?.name ?? 'Item'} · {item.size ?? 'Standard'}</span><b>{item.quantity}</b></div>)}<div className="total-line"><span>Total (app price)</span><b>{money(token.total)}</b></div><button className="primary-button full" disabled={busy} onClick={generateBill}>{busy ? 'Generating...' : 'Generate bill'} <CreditCard size={16} /></button></div>}
+    </>}
+  </div>;
+}
 function WalletView({ shop, notify }: { shop: Shop; notify: (message: string) => void }) { return <div className="page"><div className="page-heading"><div><span className="eyebrow">Merchant wallet</span><h1>Keep selling</h1></div><WalletCards size={23} /></div><div className="wallet-card"><span>Available balance</span><strong>₹{shop.wallet_balance ?? 500}</strong><p>Prepaid token fees are deducted here.</p><button className="white-button" onClick={() => notify('Top-up simulated via UPI')}>Top up via UPI <Plus size={15} /></button></div><div className="ledger"><h3>Recent activity</h3><div><div className="ledger-icon green"><Plus size={15} /></div><span><b>Wallet top-up</b><small>Today, 10:12 am</small></span><strong className="positive">+₹500</strong></div><div><div className="ledger-icon orange"><Ticket size={15} /></div><span><b>Token fee</b><small>Yesterday, 4:45 pm</small></span><strong>−₹10</strong></div></div></div>; }
 function RadarView() {
   // Curated festival calendar (pilot decision: human-curated, not scraped). Dates per published panchang lists; regional dates can differ by a day.
@@ -855,7 +895,3 @@ function ProductPage({ products, shops, offers, addToCart, setCart, setView }: {
 }
 
 export default App;
-
-
-
- 
