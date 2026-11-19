@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
 import { DEMO_CITY, ABOUT_LINKS } from '@/lib/config';
-import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { AnimatePresence, motion } from 'framer-motion';
 import { readPage, matchPhotos, cropToBlob, type Box, type TextItem } from '@/catalogPhotos';
 
@@ -243,6 +243,7 @@ function DemoChip({ role, onSwitch, onExit }: { role: Role; onSwitch: (role: Rol
   const label = role === 'customer' ? 'Customer' : 'Shopkeeper';
   return <><button className="demo-chip-fab" onClick={() => setOpen(true)}>Demo · {label} <ChevronRight size={12} style={{ transform: 'rotate(90deg)' }} /></button>{open && <div className="sheet-overlay" onClick={() => setOpen(false)}><div className="bottom-sheet" onClick={(e) => e.stopPropagation()}><div className="sheet-handle" /><h3>Demo session</h3><button className="sheet-option" onClick={() => { setOpen(false); onSwitch(role === 'customer' ? 'merchant' : 'customer'); }}><RefreshCw size={16} /> Switch to demo {role === 'customer' ? 'shopkeeper' : 'customer'}</button><button className="sheet-option sheet-exit" onClick={() => { setOpen(false); onExit(); }}><X size={16} /> Exit demo</button></div></div>}</>;
 }
+
 function NotificationBell({ userId }: { userId?: string }) {
   const [count, setCount] = useState(0);
   useEffect(() => { if (!userId) return; supabase.from('notifications').select('id', { count: 'exact', head: true }).eq('customer', userId).is('read_at', null).then(({ count: nextCount }) => setCount(nextCount ?? 0)); }, [userId]);
@@ -717,7 +718,8 @@ function BottomNav({ view, setView, cartCount }: { view: View; setView: (view: V
 function MerchantNav({ view, setView, onSignOut }: { view: View; setView: (view: View) => void; onSignOut: () => void }) { return <nav className="bottom-nav merchant-nav"><button className={view === 'requests' ? 'active' : ''} onClick={() => setView('requests')}><PackageCheck size={19} /><span>Requests</span></button><button className={view === 'scan' ? 'active' : ''} onClick={() => setView('scan')}><Camera size={19} /><span>Scan</span></button><button className={view === 'radar' ? 'active' : ''} onClick={() => setView('radar')}><Flame size={19} /><span>Radar</span></button><button className={view === 'wallet' ? 'active' : ''} onClick={() => setView('wallet')}><WalletCards size={19} /><span>Wallet</span></button><button className={view === 'more' ? 'active' : ''} onClick={() => setView('more')}><Menu size={19} /><span>More</span></button></nav>; }
 
 function ProductPage({ products, shops, offers, addToCart, setCart, setView }: { products: Product[]; shops: Shop[]; offers: Offer[]; addToCart: (product: Product, offer: Offer, shop: Shop, size?: string) => void; setCart: React.Dispatch<React.SetStateAction<CartItem[]>>; setView: (view: View) => void }) {
-  const { id } = useParams<{ id: string }>();
+  const location = useLocation();
+  const id = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop() ?? '');
   const product = products.find((p) => p.id === id);
   const productOffers = useMemo(() => offers.filter((o) => o.product === id).map((o) => ({ offer: o, shop: shops.find((s) => s.id === o.shop)! })).filter((item) => item.shop).sort((a, b) => Number(b.shop.subscribed) - Number(a.shop.subscribed) || Number((b.shop.token_volume ?? 0) >= 50) - Number((a.shop.token_volume ?? 0) >= 50) || (a.shop.distance_km ?? 0) - (b.shop.distance_km ?? 0)), [offers, shops, id]);
   const [selectedOfferIdx, setSelectedOfferIdx] = useState(0);
