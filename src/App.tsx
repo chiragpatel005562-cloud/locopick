@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   ArrowLeft, Bell, BookOpen, Camera, Check, ChevronRight, CircleHelp, CreditCard,
   Crown, Flame, Home, MapPin, Menu, PackageCheck, Pencil, Plus, RefreshCw, Search, Send, ShieldCheck,
@@ -356,7 +356,9 @@ function ActiveTokensView({ tokens, notify, reliability }: { tokens: Token[]; no
 }
 
 function MerchantApp({ view, setView, shops, tokens, notify, email, products, offers, userId, loadCatalog, demoSession, onSwitchDemo, onSignOut }: { view: View; setView: (view: View) => void; shops: Shop[]; tokens: Token[]; notify: (message: string, tone?: Toast['tone']) => void; email: string; products: Product[]; offers: Offer[]; userId: string; loadCatalog: () => Promise<void>; demoSession: boolean; onSwitchDemo: (role: Role) => void; onSignOut: () => void }) {
-  const shop = shops[0];
+  const [ownedId, setOwnedId] = useState<string | null>(null);
+  useEffect(() => { let live = true; supabase.from('shops').select('id').eq('owner', userId).limit(1).maybeSingle().then((r) => { if (live && r.data) setOwnedId((r.data as { id: string }).id); }); return () => { live = false; }; }, [userId]);
+  const shop = shops.find((x) => x.id === ownedId) ?? shops[0];
   if (view === 'scan') return <ScanView shop={shop} notify={notify} />;
   if (view === 'wallet') return <WalletView shop={shop} notify={notify} />;
   if (view === 'radar') return <RadarView />;
@@ -898,15 +900,17 @@ function InventoryView({ shop, products, offers, notify, onChanged }: { shop: Sh
 }
 
 function AboutPage() {
-  const real = ['Customer and shopkeeper sign-in, shops, products and prices from a live database', 'Reserve-and-inspect token with a 6-digit code, stored in the database', 'Shopkeeper scan: code is checked, token is marked used, bill and ₹ fee are created by the database', 'Shopkeeper inventory: stock per size or quantity saved to the database', 'Token history, category filters, product pages, cart'];
-  const fake = ['Wallet top-up is simulated (no real payment)', 'Camera preview is a placeholder: the shopkeeper types the 6-digit code', 'Trend Radar festival list is hand-curated; waitlist counts are demo data', 'Shop distances and ratings are sample data', 'Stock is not reduced when a token is created, and cancelling a token does not yet update the database', 'PRD rules such as the 5-minute cap and the 7-day / 3-cancel limit are not built in this prototype'];
+  const real = ['Sign-in for customer and shopkeeper, with shops, products and prices from a live database', 'Reserve-and-inspect token with a 6-digit code, saved in the database', 'Shopkeeper scan: the code is verified, the token is marked used, and the bill and fee are created by the database', 'Shopkeeper inventory: stock per size or quantity is saved', 'Product pages, cart, category filters, token history'];
+  const fake = ['Wallet top-up is simulated (no real payment)', 'Camera preview is a placeholder; the shopkeeper types the 6-digit code', 'Trend Radar festivals are hand-picked; waitlist counts are demo data', 'Shop distances and ratings are sample data', 'Stock does not reduce when a token is created, and cancelling a token does not update the database yet', 'PRD rules like the 5-minute cap and 7-day / 3-cancel limit are not built here'];
+  const card: CSSProperties = { background: '#fff', border: '1px solid #e5ebee', borderRadius: 16, padding: 16, marginBottom: 14 };
+  const h: CSSProperties = { margin: '0 0 10px', fontSize: 15, color: '#12345a' };
+  const row = (ok: boolean): CSSProperties => ({ display: 'flex', gap: 10, alignItems: 'flex-start', padding: '8px 0', fontSize: 13, lineHeight: 1.45, color: '#33414d', borderTop: '1px solid #f0f3f5', listStyle: 'none' });
+  const List = ({ items, ok }: { items: string[]; ok: boolean }) => <ul style={{ margin: 0, padding: 0 }}>{items.map((t) => <li key={t} style={row(ok)}><span style={{ flex: '0 0 20px', height: 20, borderRadius: 10, display: 'grid', placeItems: 'center', background: ok ? '#e3f6ea' : '#fff1e6', color: ok ? '#1c8a4a' : '#e8590c' }}>{ok ? <Check size={12} /> : <X size={12} />}</span><span>{t}</span></li>)}</ul>;
   return <div className="page"><div className="page-heading"><div><span className="eyebrow">About</span><h1>About this prototype</h1></div><BookOpen size={23} /></div>
-    <div className="empty-card"><b>LocoPick</b><p className="hint">A hyperlocal marketplace where customers reserve an item, inspect it in the shop, and the shopkeeper pays a small fee only when the pickup actually happens. Demo city: {DEMO_CITY}. This is a portfolio case study, not a live business.</p></div>
-    <div className="section-heading"><div><h2>What really works</h2></div></div>
-    <div className="profile-list">{real.map((t) => <div key={t}><Check size={16} /> <span>{t}</span></div>)}</div>
-    <div className="section-heading"><div><h2>What is simulated or not built</h2></div></div>
-    <div className="profile-list">{fake.map((t) => <div key={t}><CircleHelp size={16} /> <span>{t}</span></div>)}</div>
-    <p className="hint">All shops, prices and stock are sample data made for the demo.</p></div>;
+    <div style={card}><h3 style={h}>LocoPick</h3><p style={{ margin: 0, fontSize: 13, lineHeight: 1.5, color: '#55626e' }}>Customers reserve an item online, inspect it in the shop, and the shopkeeper pays a small fee only when the pickup really happens. Demo city: {DEMO_CITY}. This is a portfolio case study, not a live business.</p></div>
+    <div style={card}><h3 style={h}>What really works</h3><List items={real} ok /></div>
+    <div style={card}><h3 style={h}>Simulated or not built</h3><List items={fake} ok={false} /></div>
+    <p style={{ fontSize: 11, color: '#7d8995', textAlign: 'center' }}>All shops, prices and stock are sample data made for the demo.</p></div>;
 }
 function SectionTitle({ title, action }: { title: string; action: string }) { return <div className="section-title"><h2>{title}</h2><button>{action} <ChevronRight size={15} /></button></div>; }
 function BottomNav({ view, setView, cartCount }: { view: View; setView: (view: View) => void; cartCount: number }) { return <nav className="bottom-nav"><button className={view === 'home' ? 'active' : ''} onClick={() => setView('home')}><Home size={19} /><span>Home</span></button><button className={view === 'tokens' ? 'active' : ''} onClick={() => setView('tokens')}><Ticket size={19} /><span>Tokens</span></button><button className={view === 'cart' ? 'active' : ''} onClick={() => setView('cart')}><ShoppingBag size={19} /><span>Cart{cartCount ? ` · ${cartCount}` : ''}</span></button><button className={view === 'profile' ? 'active' : ''} onClick={() => setView('profile')}><UserRound size={19} /><span>Profile</span></button></nav>; }
